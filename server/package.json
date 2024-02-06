@@ -24,6 +24,7 @@
     "express": "^4.18.2",
     "htmlparser2": "^9.0.0",
     "import-fixer": "^0.8.2204282156",
+    "langchain": "^0.1.13",
     "markdown-it": "^13.0.1",
     "mongoose": "^7.5.3",
     "mongoose-schema-jsonschema": "^2.1.0",
