@@ -27,6 +27,7 @@ async function run(req) {
     stages: {},
   };
   for (let [index, pass] of req.passes.entries()) {
+    // try {
     console.log(`> pass ${index}/${req.passes.length - 1}`);
     const response = await require(`./passes/${pass}/index.js`).run({
       stream: req.stream,
@@ -42,6 +43,10 @@ async function run(req) {
       success: response.success,
       data: response.data,
     };
+    // } catch (e) {
+    //   console.log(e);
+    //   break;
+    // }
   }
 
   await log({

@@ -3,9 +3,7 @@ async function run(query) {
 
   if (!query.components || !query.components.length) return [];
 
-  const components_library = require(
-    `../../../../library/components/${query.framework}/${query.library}/dump.json`,
-  );
+  const components_library = require(`../../../../library/components/${query.framework}/${query.library}/dump.json`);
 
   return components_library.filter((e) => {
     return query.components

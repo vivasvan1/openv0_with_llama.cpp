@@ -1,21 +1,24 @@
 const fs = require("fs");
-const mongoose = require("mongoose-schema-jsonschema")();
-const config = require("mongoose-schema-jsonschema/config");
 const { Schema } = require("mongoose");
 const schema = require("schm");
 const { validate } = schema;
-const { OpenAI } = require("openai");
 require("dotenv").config();
 const path = require("path");
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
-function _titleCase(str) {
-  return str.replace(/\w\S*/g, function (txt) {
-    return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
-  });
-}
+const { ChatOllama } = require("@langchain/community/chat_models/ollama");
+const { HumanMessage } = require("@langchain/core/messages");
+const { saveJsonToFile } = require("../../../../library/utils/file.js");
+const {
+  DEBUG_design_component_new_from_description: DEBUG,
+  SKIP_design_component_new_from_description: SKIP,
+} = require("../../../../library/utils/debug.js");
+
+// Setup Ollama client with baseUrl pointing to your local Ollama server
+const ollama = new ChatOllama({
+  baseUrl: "http://localhost:11434", // Assuming this is where your Ollama server is running
+  model: "mistral:instruct",
+  temperature: 1.1,
+});
 
 function _randomUid(length) {
   let result = "";
@@ -37,14 +40,15 @@ fs.readdirSync(`./library/components`)
     fs.readdirSync(`./library/components/${framework}`)
       .filter((e) => !e.includes(`.`))
       .map((components) => {
-        LIBRARY_COMPONENTS_MAP[framework][components] = require(
-          `../../../../library/components/${framework}/${components}/dump.json`,
-        ).map((e) => {
-          return {
-            name: e.name,
-            description: e.description,
-          };
-        });
+        LIBRARY_COMPONENTS_MAP[framework][components] =
+          require(`../../../../library/components/${framework}/${components}/dump.json`).map(
+            (e) => {
+              return {
+                name: e.name,
+                description: e.description,
+              };
+            }
+          );
       });
   });
 
@@ -56,13 +60,12 @@ async function run(req) {
     new_component_description: {
       type: String,
       required: true,
-      description: `Write a description for the ${_titleCase(
-        req.query.framework,
-      )} component design task based on the user query. Stick strictly to what the user wants in their request - do not go off track`,
     },
     new_component_icons_elements: {
       does_new_component_need_icons_elements: { type: Boolean, required: true },
-      if_so_what_new_component_icons_elements_are_needed: [{ type: String }],
+      if_so_what_new_component_icons_elements_are_needed: {
+        type: [{ icon_name: { type: String } }],
+      },
     },
     use_library_components: [
       {
@@ -78,15 +81,13 @@ async function run(req) {
   };
 
   const context = [
-    {
-      role: `system`,
+    new HumanMessage({
       content:
-        `Your task is to design a new ${req.query.framework} component for a web app, according to the user's request.\n` +
+        `Your task is to design a new ${req.query.framework} component for a web app, Description of the component is \`\`\`${req.query.description}\`\`\`.\n` +
         `If you judge it is relevant to do so, you can specify pre-made library components to use in the task.\n` +
-        `You can also specify the use of icons if you see that the user's request requires it.`,
-    },
-    {
-      role: `user`,
+        +`You can also specify the use of icons if you see that the user's request requires it.`,
+    }),
+    new HumanMessage({
       content:
         "Multiple library components can be used while creating a new component in order to help you do a better design job, faster.\n\nAVAILABLE LIBRARY COMPONENTS:\n```\n" +
         LIBRARY_COMPONENTS_MAP[req.query.framework][req.query.components]
@@ -95,52 +96,84 @@ async function run(req) {
           })
           .join("\n") +
         "\n```",
-    },
-    {
-      role: `user`,
+    }),
+    new HumanMessage({
       content:
-        "USER QUERY : \n```\n" +
-        req.query.description +
-        "\n```\n\n" +
-        `Design the new ${req.query.framework} web component task for the user as the creative genius you are`,
-    },
+        "\n\n Your answer should be without any explaination and must contain only and only valid JSON of the following schema wrapped in ```json\n <Your_answer>```. \n" +
+        `${JSON.stringify(components_schema)}` +
+        "\n",
+    }),
+
+    // new HumanMessage({
+    //   content: "Output:",
+    // }),
   ];
 
-  const gptPrompt = {
-    model: process.env.OPENAI_MODEL,
-    messages: context,
-    functions: [
-      {
-        name: `design_new_component_api`,
-        description: `generate the required design details to create a new component`,
-        parameters: new Schema(components_schema, { _id: false }).jsonSchema(),
-      },
-    ],
-  };
+  // Save the context object as a JSON file for debugging purposes
+  DEBUG && saveJsonToFile(context, __dirname + "/" + "gptPrompt.json");
 
   let completion = "";
-  const stream = await openai.chat.completions.create({
-    ...gptPrompt,
-    stream: true,
-  });
-  for await (const part of stream) {
-    try {
-      process.stdout.write(
-        part.choices[0]?.delta?.function_call.arguments || "",
-      );
-    } catch (e) {
-      false;
-    }
-    try {
-      const chunk = part.choices[0]?.delta?.function_call.arguments || "";
-      completion += chunk;
-      req.stream.write(chunk);
-    } catch (e) {
-      false;
-    }
-  }
+  if (!SKIP) {
+    // Stream the context through the Ollama chat model to generate a response
+    const stream = await ollama.stream(context);
 
+    // Process each part of the stream
+    for await (const part of stream) {
+      try {
+        // Write the content to stdout for debugging and accumulate it in the completion string
+        process.stdout.write(part.content || "");
+        const chunk = part.content || "";
+        completion += chunk;
+        // Write the chunk to the request stream
+        req.stream.write(chunk);
+      } catch (e) {
+        // Handle any errors that occur during streaming
+        false;
+      }
+    }
+    // Save the completion string as a JSON file for debugging purposes
+    DEBUG && saveJsonToFile(completion, path.join(__dirname, "gptReply.json"));
+  } else {
+    completion = fs
+      .readFileSync(path.join(__dirname, "gptReply.json"))
+      .toString();
+  }
+  DEBUG && console.log(completion);
+  // Write a newline character to the request stream for formatting
   req.stream.write(`\n`);
+  // Replace escaped underscores with actual underscores in the completion string
+  completion = completion.replaceAll("\\_", "_");
+
+  // Initialize variables for extracting the generated code from the completion string
+  let generated_code = ``;
+  let start = false;
+
+  // Iterate over each line of the completion string
+  for (let l of completion.split("\n")) {
+    let skip = false;
+    // Check if the line indicates the start or end of a code block
+    if (["```", "```json"].includes(l.toLowerCase().trim())) {
+      start = !start;
+      skip = true;
+    }
+    // If within a code block and not skipping, append the line to the generated code
+    if (start && !skip) generated_code += `${l}\n`;
+  }
+  // Trim any leading or trailing whitespace from the generated code
+  generated_code = generated_code.trim();
+
+  // Save the extracted generated code as a JSON file for debugging purposes
+  saveJsonToFile(generated_code, __dirname + "/generated_code.json");
+
+  // Initialize an empty object to hold the parsed JSON
+  let json = {};
+  try {
+    // Attempt to parse the generated code as JSON
+    json = JSON.parse(generated_code);
+  } catch (e) {
+    // If parsing fails, rethrow the error
+    throw e;
+  }
 
   const component_design = {
     ...{
@@ -149,7 +182,7 @@ async function run(req) {
       new_component_icons_elements: false,
       use_library_components: false,
     },
-    ...eval(`(${completion})`),
+    ...eval(`(${generated_code})`),
   };
 
   const component_task = {
@@ -170,7 +203,7 @@ async function run(req) {
         )
       ? false
       : component_design.new_component_icons_elements.if_so_what_new_component_icons_elements_are_needed.map(
-          (e) => e.toLowerCase(),
+          (e) => e.icon_name.toLowerCase()
         ),
     components: !component_design.use_library_components
       ? false

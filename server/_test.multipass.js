@@ -12,8 +12,8 @@ async function test() {
     stream,
     preset: `componentNew_description`,
     query: {
-      description: `a simple paragraph`,
-      framework: `svelte`,
+      description: `a sleek tweet UI`,
+      framework: `react`,
       components: `shadcn`,
       icons: `lucide`,
     },
