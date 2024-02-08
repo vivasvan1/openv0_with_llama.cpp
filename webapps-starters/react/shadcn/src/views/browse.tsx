@@ -5,7 +5,7 @@ export default function Browse() {
 	const navigateTo  = useNavigate();
 
 	const [generateMode, setGenerateMode] = useState('description');
-	const [componentStream, setComponentStream] = useState(false);
+	const [componentStream, setComponentStream] = useState<any>(false);
 	const [userInputDescription, setUserInputDescription] = useState('');
 	const [userInputJson, setUserInputJson] = useState('');
 	const [processing, setProcessing] = useState(false);
@@ -28,7 +28,6 @@ export default function Browse() {
 		const imports = data.items.map(async (component) => {
 			// Construct the import path for each child component
 			const importPath = `${libRelativePath}/${component.name}/${component.name}_${component.latest}.tsx`;
-			console.log(importPath)
 			try {
 				// Use dynamic import to load the component, and catch any errors
 				let module
@@ -187,7 +186,7 @@ export default function Browse() {
 				        ) : (
 				          <textarea
 				            className="w-full p-2 text-sm md:text-xs resize-none font-light font-mono bg-transparent outline-none border-none ring-none"
-				            rows="4"
+				            rows={4}
 				            placeholder="paste your json object here"
 				            value={userInputJson}
 				            onChange={(e) => setUserInputJson(e.target.value)}

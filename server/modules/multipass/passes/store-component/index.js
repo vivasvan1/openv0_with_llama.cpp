@@ -54,7 +54,7 @@ const Component = sequelize.define(
       allowNull: true,
     },
   },
-  { timestamps: false },
+  { timestamps: false }
 );
 
 const Fail = sequelize.define("Fail", {
@@ -88,7 +88,6 @@ async function run(req) {
   */
 
   let dbId = -1;
-
   if (req.pipeline.stages[`component`].success) {
     let description = ``;
     try {

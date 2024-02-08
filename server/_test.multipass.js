@@ -12,8 +12,8 @@ async function test() {
     stream,
     preset: `componentNew_description`,
     query: {
-      description: `a simple paragraph`,
-      framework: `svelte`,
+      description: `An ecommrce site for selling TCGs like Magic, Pokemon, YuGiOh and more. `,
+      framework: `react`,
       components: `shadcn`,
       icons: `lucide`,
     },

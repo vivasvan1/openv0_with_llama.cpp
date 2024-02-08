@@ -53,7 +53,7 @@ async function run(req) {
   retrieved.components = retrieved.components.map((library_component, idx) => {
     let _library_component_examples = [...library_component.docs.examples];
     const _tokens_limit = parseInt(
-      process.env.PASS__CONTEXT__COMPONENTS_LIBRARY_EXAMPLES__TOKEN_LIMIT,
+      process.env.PASS__CONTEXT__COMPONENTS_LIBRARY_EXAMPLES__TOKEN_LIMIT
     );
     let _consumed_tokens = 0;
     let _examples = [];
@@ -64,11 +64,11 @@ async function run(req) {
     ) {
       const random_component_example = _library_component_examples.splice(
         Math.floor(Math.random() * _library_component_examples.length),
-        1,
+        1
       )[0];
 
       _consumed_tokens += tiktokenEncoder.encode(
-        random_component_example.code,
+        random_component_example.code
       ).length;
 
       if (_consumed_tokens < _tokens_limit)
@@ -77,7 +77,7 @@ async function run(req) {
 
     console.log(
       `tokens for context entry ${library_component.name} : ${_consumed_tokens} ` +
-        `(limit : ${process.env.PASS__CONTEXT__COMPONENTS_LIBRARY_EXAMPLES__TOKEN_LIMIT})`,
+        `(limit : ${process.env.PASS__CONTEXT__COMPONENTS_LIBRARY_EXAMPLES__TOKEN_LIMIT})`
     );
 
     let updated_library_component = { ...library_component };
@@ -93,7 +93,7 @@ async function run(req) {
         ? ""
         : "\n\n" +
           `# full code examples of ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} components that use ${e.name} :\n` +
           e.docs.examples
             .map((example) => {
@@ -106,7 +106,7 @@ async function run(req) {
         role: `user`,
         content:
           `Library components can be used while making the new ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component\n\n` +
           `Suggested library component (${idx + 1}/${
             retrieved.components.length
@@ -131,7 +131,8 @@ async function run(req) {
 
     ...[
       retrieved.icons.icons.length
-        ? {
+        ? // IF Icons are matched
+          {
             role: `user`,
             content:
               `Icon elements can optionally be used when making the React component.\n\n` +
@@ -161,7 +162,29 @@ async function run(req) {
               "\n```",
             //'icon stuff >' + JSON.stringify(retrieved.icons)
           }
-        : false,
+        : // IF no Icons are matched in vectr search
+          {
+            role: `user`,
+            content:
+              `Icon elements can optionally be used when making the React component.\n\n` +
+              `---\n\n` +
+              "For example, " +
+              "to use the FontAwesome beer icon, you would write:\n\n" +
+              "```tsx\n" +
+              "import { FaBeer } from 'react-icons/fa';\n" +
+              "```\n\n" +
+              "And to use it in your component:\n\n" +
+              "```tsx\n" +
+              "<FaBeer size={14} />\n" +
+              "```\n\n" +
+              "This is a basic guide to getting started with `react-icons` in your React components, allowing for a wide variety " +
+              "of icons from different libraries to be easily incorporated into your projects." +
+              `---\n` +
+              "\nIMPORTANT: When using any icon make sure that alignment of icon is correct and it is positioned appropriatly w.r.t. the parent. \n" +
+              "For example: \n" +
+              `<button className="flex item-center justify-center"><FaPaperPlane size={14} className="mr-1" /> Tweet</button>\n\n` +
+              `Here when using the FaPaperPlaneIcon we have added flex items-center and justify-center on the parent button component`,
+          },
     ],
   ].filter((e) => e);
 
