@@ -1,2 +1,6 @@
 node_modules/
 gits/
+**/gpt*.json
+**/completion.json
+**/openv0_generated/
+**/generated_code.json

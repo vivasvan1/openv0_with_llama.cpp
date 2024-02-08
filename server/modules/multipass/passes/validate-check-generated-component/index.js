@@ -4,7 +4,11 @@ const parser = require("@babel/parser");
 const traverse = require("@babel/traverse").default;
 const generator = require("@babel/generator").default;
 const { fixImport } = require(`import-fixer`);
+const prettier = require("prettier");
 
+const {
+  DEBUG_validate_check_generated_component,
+} = require("../../../../library/utils/debug");
 /*
   !
     important : will skip most validation for svelte ; need to figure out how to use it with babel ...
@@ -123,8 +127,10 @@ function _babel_extract_nodes(code) {
       jsxElements.push(elementName);
     },
   });
-
-  return jsxElements.filter((e) => e[0].toUpperCase() === e[0]);
+  return jsxElements.filter((e) => {
+    if (!e) return false;
+    return e[0].toUpperCase() === e[0];
+  });
 }
 
 function _imports_list_from_code(framework, _code) {
@@ -166,8 +172,8 @@ function _make_imports_list_from_components_library(framework, components) {
   JSON.parse(
     fs.readFileSync(
       `./library/components/${framework}/${components}/dump.json`,
-      `utf-8`,
-    ),
+      `utf-8`
+    )
   ).map((c) => {
     [
       c.docs.import.code,
@@ -188,51 +194,65 @@ async function validate(query) {
 
   let found_errors_stack = [];
 
+  // Use Prettier to format the code
+  if (query.framework !== `svelte`) {
+    try {
+      query.code = await prettier.format(query.code, {
+        parser: "typescript",
+      });
+    } catch (e) {
+      console.dir({
+        type: "prettier-error",
+        success: false,
+        error: e,
+      });
+    }
+  }
   // pre validation processing : ie. svelte needs to split at <script></script> ; add checkpoint ; replace it further down
   const __component_code_pre =
     query.framework != `svelte`
       ? query.code
       : !query.code.includes(`<script`)
-      ? query.code
-      : query.code
-          .split(`</script>`)
-          .filter((l) => l.trim().length)
-          .map((block, idx) => {
-            if (!idx) {
-              // header; script block
-              return block
-                .split(`\n`)
-                .filter((l) => !l.startsWith(`<script`))
-                .map((l) => {
-                  if (l.includes(`import`)) return l.trim();
-                  return l;
-                })
-                .join(`\n`);
-            } else {
-              // body, html block
-              // mimick react component style
-              return (
-                `export default function App() {\n\n return (\n  <>\n` +
-                block
+        ? query.code
+        : query.code
+            .split(`</script>`)
+            .filter((l) => l.trim().length)
+            .map((block, idx) => {
+              if (!idx) {
+                // header; script block
+                return block
                   .split(`\n`)
-                  .map((l) => `   ${l}`)
-                  .join(`\n`) +
-                `\n  </>\n )\n}`
-              );
-            }
-          })
-          .join(`\n`);
+                  .filter((l) => !l.startsWith(`<script`))
+                  .map((l) => {
+                    if (l.includes(`import`)) return l.trim();
+                    return l;
+                  })
+                  .join(`\n`);
+              } else {
+                // body, html block
+                // mimick react component style
+                return (
+                  `export default function App() {\n\n return (\n  <>\n` +
+                  block
+                    .split(`\n`)
+                    .map((l) => `   ${l}`)
+                    .join(`\n`) +
+                  `\n  </>\n )\n}`
+                );
+              }
+            })
+            .join(`\n`);
 
   // duplicate/unused imports (via `import-fixer` for now) ; necessary to run first because otherwise babel ast fails
   // if no imports used, `import-fixer` returns error:true, in which case skip imports validation
   const __temp_file = `./__import_fixer_temp_${Math.floor(
-    Math.random() * (99999 - 10000) + 10000,
+    Math.random() * (99999 - 10000) + 10000
   )}`;
   let __component_code = `${__component_code_pre}`;
 
   const __import_fixer_response = fixImport(
     __temp_file,
-    __component_code_pre.replaceAll(`$`, `______________`), // <--- `import-fixer` ignores the `$` char, dirty fix but works for now
+    __component_code_pre.replaceAll(`$`, `______________`) // <--- `import-fixer` ignores the `$` char, dirty fix but works for now
   );
 
   if (__import_fixer_response.error) {
@@ -252,7 +272,7 @@ async function validate(query) {
           __import_fixer_response.output
             .split(`\n`)
             .filter(
-              (e) => !e.includes(`"use client"`) && !e.includes(`'use client'`),
+              (e) => !e.includes(`"use client"`) && !e.includes(`'use client'`)
             )
             .join(`\n`);
       }
@@ -277,7 +297,7 @@ async function validate(query) {
     // console.dir({__component_code_before_resvelting : __component_code},{depth:null})
 
     let __component_code_split = __component_code.split(
-      `export default function App() {\n\n return (\n  <>\n`,
+      `export default function App() {\n\n return (\n  <>\n`
     );
     if (__component_code_split.length <= 1) {
       __component_code_split = [``, ...__component_code_split];
@@ -306,7 +326,9 @@ async function validate(query) {
         success: !found_errors_stack.length ? true : false,
       },
     });
-
+    DEBUG_validate_check_generated_component &&
+      found_errors_stack.length &&
+      console.log("errors found:\n\n" + JSON.stringify(found_errors_stack));
     return {
       type: `component-validation-check`,
       success: !found_errors_stack.length ? true : false,
@@ -323,12 +345,13 @@ async function validate(query) {
 
   const _code_imports = _imports_list_from_code(
     query.framework,
-    __component_code,
+    __component_code
   );
 
   if (_code_imports.error) {
     // if babel AST fails, cannot proceed with further validation
-    // console.dir({ bad_syntax_error: _code_imports });
+    DEBUG_validate_check_generated_component &&
+      console.dir({ bad_syntax_error: _code_imports });
 
     found_errors_stack.push({
       error: `bad-syntax`,
@@ -342,7 +365,9 @@ async function validate(query) {
         success: !found_errors_stack.length ? true : false,
       },
     });
-
+    DEBUG_validate_check_generated_component &&
+      found_errors_stack.length &&
+      console.log("errors found:\n\n" + JSON.stringify(found_errors_stack));
     return {
       type: `component-validation-check`,
       success: !found_errors_stack.length ? true : false,
@@ -358,15 +383,12 @@ async function validate(query) {
     components: JSON.parse(
       fs.readFileSync(
         `./library/components/${query.framework}/${query.components}/metadata.json`,
-        `utf-8`,
-      ),
+        `utf-8`
+      )
     ).import,
     icons: [
       JSON.parse(
-        fs.readFileSync(
-          `./library/icons/${query.icons}/metadata.json`,
-          `utf-8`,
-        ),
+        fs.readFileSync(`./library/icons/${query.icons}/metadata.json`, `utf-8`)
       ).import[query.framework],
     ],
     code: _code_imports,
@@ -383,10 +405,23 @@ async function validate(query) {
   });
   const component_used_nodes = _babel_extract_nodes(__component_code);
 
+  DEBUG_validate_check_generated_component &&
+    console.log(
+      "\n\nimports_lists",
+      imports_lists,
+      "\n\ncomponent_imports",
+      component_imports,
+      "\n\ncomponent_used_nodes",
+      component_used_nodes,
+      "\n\ncomponent_imported_nodes_map",
+      component_imported_nodes_map
+    );
+
   let all_used_nodes_are_imported = true;
   component_used_nodes.map((_c) => {
-    if (!Object.keys(component_imported_nodes_map).includes(_c))
+    if (!Object.keys(component_imported_nodes_map).includes(_c)) {
       all_used_nodes_are_imported = false;
+    }
   });
 
   if (!all_used_nodes_are_imported) {
@@ -438,7 +473,7 @@ async function validate(query) {
     });
   });
   const all_component_imports_are_allowed = Object.values(
-    component_imports_checks,
+    component_imports_checks
   ).filter((e) => !e).length
     ? false
     : true;
@@ -474,6 +509,9 @@ async function validate(query) {
     },
   });
 
+  DEBUG_validate_check_generated_component &&
+    found_errors_stack.length &&
+    console.log("errors found:\n\n" + JSON.stringify(found_errors_stack));
   return {
     type: `component-validation-check`,
     success: !found_errors_stack.length ? true : false,

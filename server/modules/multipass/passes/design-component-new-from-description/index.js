@@ -5,20 +5,14 @@ const { validate } = schema;
 require("dotenv").config();
 const path = require("path");
 
-const { ChatOllama } = require("@langchain/community/chat_models/ollama");
-const { HumanMessage } = require("@langchain/core/messages");
 const { saveJsonToFile } = require("../../../../library/utils/file.js");
 const {
   DEBUG_design_component_new_from_description: DEBUG,
-  SKIP_design_component_new_from_description: SKIP,
 } = require("../../../../library/utils/debug.js");
 
-// Setup Ollama client with baseUrl pointing to your local Ollama server
-const ollama = new ChatOllama({
-  baseUrl: "http://localhost:11434", // Assuming this is where your Ollama server is running
-  model: "mistral:instruct",
-  temperature: 1.1,
-});
+const BackendContextSingleton = require("../../agents/BackendContextSingleton.js");
+
+const backendContext = BackendContextSingleton.getInstance();
 
 function _randomUid(length) {
   let result = "";
@@ -40,15 +34,14 @@ fs.readdirSync(`./library/components`)
     fs.readdirSync(`./library/components/${framework}`)
       .filter((e) => !e.includes(`.`))
       .map((components) => {
-        LIBRARY_COMPONENTS_MAP[framework][components] =
-          require(`../../../../library/components/${framework}/${components}/dump.json`).map(
-            (e) => {
-              return {
-                name: e.name,
-                description: e.description,
-              };
-            }
-          );
+        LIBRARY_COMPONENTS_MAP[framework][components] = require(
+          `../../../../library/components/${framework}/${components}/dump.json`
+        ).map((e) => {
+          return {
+            name: e.name,
+            description: e.description,
+          };
+        });
       });
   });
 
@@ -75,72 +68,25 @@ async function run(req) {
             req.query.components
           ].map((e) => e.name),
         },
-        library_component_usage_reason: String,
+        library_component_usage_reason: { type: String },
       },
     ],
   };
 
-  const context = [
-    new HumanMessage({
-      content:
-        `Your task is to design a new ${req.query.framework} component for a web app, Description of the component is \`\`\`${req.query.description}\`\`\`.\n` +
-        `If you judge it is relevant to do so, you can specify pre-made library components to use in the task.\n` +
-        +`You can also specify the use of icons if you see that the user's request requires it.`,
-    }),
-    new HumanMessage({
-      content:
-        "Multiple library components can be used while creating a new component in order to help you do a better design job, faster.\n\nAVAILABLE LIBRARY COMPONENTS:\n```\n" +
-        LIBRARY_COMPONENTS_MAP[req.query.framework][req.query.components]
-          .map((e) => {
-            return `${e.name} : ${e.description};`;
-          })
-          .join("\n") +
-        "\n```",
-    }),
-    new HumanMessage({
-      content:
-        "\n\n Your answer should be without any explaination and must contain only and only valid JSON of the following schema wrapped in ```json\n <Your_answer>```. \n" +
-        `${JSON.stringify(components_schema)}` +
-        "\n",
-    }),
+  // Build appropriate context and fetch AI Response
+  let completion = await backendContext.design_component_new_from_description({
+    ...req,
+    LIBRARY_COMPONENTS_MAP,
+    components_schema,
+  });
 
-    // new HumanMessage({
-    //   content: "Output:",
-    // }),
-  ];
-
-  // Save the context object as a JSON file for debugging purposes
-  DEBUG && saveJsonToFile(context, __dirname + "/" + "gptPrompt.json");
-
-  let completion = "";
-  if (!SKIP) {
-    // Stream the context through the Ollama chat model to generate a response
-    const stream = await ollama.stream(context);
-
-    // Process each part of the stream
-    for await (const part of stream) {
-      try {
-        // Write the content to stdout for debugging and accumulate it in the completion string
-        process.stdout.write(part.content || "");
-        const chunk = part.content || "";
-        completion += chunk;
-        // Write the chunk to the request stream
-        req.stream.write(chunk);
-      } catch (e) {
-        // Handle any errors that occur during streaming
-        false;
-      }
-    }
-    // Save the completion string as a JSON file for debugging purposes
-    DEBUG && saveJsonToFile(completion, path.join(__dirname, "gptReply.json"));
-  } else {
-    completion = fs
-      .readFileSync(path.join(__dirname, "gptReply.json"))
-      .toString();
-  }
+  // Save the completion string as a JSON file for debugging purposes
+  DEBUG && saveJsonToFile(completion, path.join(__dirname, "gptReply.json"));
   DEBUG && console.log(completion);
+
   // Write a newline character to the request stream for formatting
   req.stream.write(`\n`);
+
   // Replace escaped underscores with actual underscores in the completion string
   completion = completion.replaceAll("\\_", "_");
 
@@ -162,8 +108,12 @@ async function run(req) {
   // Trim any leading or trailing whitespace from the generated code
   generated_code = generated_code.trim();
 
+  if (generated_code.length == 0) {
+    generated_code = completion;
+  }
+
   // Save the extracted generated code as a JSON file for debugging purposes
-  saveJsonToFile(generated_code, __dirname + "/generated_code.json");
+  DEBUG && saveJsonToFile(generated_code, __dirname + "/generated_code.json");
 
   // Initialize an empty object to hold the parsed JSON
   let json = {};
@@ -194,17 +144,17 @@ async function run(req) {
     icons: !component_design.new_component_icons_elements
       ? false
       : !(
-          component_design.new_component_icons_elements
-            .does_new_component_need_icons_elements &&
-          component_design.new_component_icons_elements
-            .if_so_what_new_component_icons_elements_are_needed &&
-          component_design.new_component_icons_elements
-            .if_so_what_new_component_icons_elements_are_needed.length
-        )
-      ? false
-      : component_design.new_component_icons_elements.if_so_what_new_component_icons_elements_are_needed.map(
-          (e) => e.icon_name.toLowerCase()
-        ),
+            component_design.new_component_icons_elements
+              .does_new_component_need_icons_elements &&
+            component_design.new_component_icons_elements
+              .if_so_what_new_component_icons_elements_are_needed &&
+            component_design.new_component_icons_elements
+              .if_so_what_new_component_icons_elements_are_needed.length
+          )
+        ? false
+        : component_design.new_component_icons_elements.if_so_what_new_component_icons_elements_are_needed.map(
+            (e) => e.icon_name.toLowerCase()
+          ),
     components: !component_design.use_library_components
       ? false
       : component_design.use_library_components.map((e) => {

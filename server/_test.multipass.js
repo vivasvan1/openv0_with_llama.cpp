@@ -12,7 +12,7 @@ async function test() {
     stream,
     preset: `componentNew_description`,
     query: {
-      description: `a sleek tweet UI`,
+      description: `An ecommrce site for selling TCGs like Magic, Pokemon, YuGiOh and more. `,
       framework: `react`,
       components: `shadcn`,
       icons: `lucide`,

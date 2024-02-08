@@ -1,15 +1,28 @@
 const path = require(`path`);
+const fs = require("fs");
 const validate_check = require(
-  `../validate-check-generated-component/index.js`,
+  `../validate-check-generated-component/index.js`
 ).validate;
 
-const { OpenAI } = require("openai");
+const {
+  SKIP_validate_fix_generated_component: SKIP,
+} = require("../../../../library/utils/debug.js");
+const BackendContextSingleton = require("../../agents/BackendContextSingleton.js");
+
+const backendContext = BackendContextSingleton.getInstance();
+
+const {
+  DEBUG_validate_fix_generated_component: DEBUG,
+} = require("../../../../library/utils/debug.js");
+
 const tiktoken = require("@dqbd/tiktoken");
 const tiktokenEncoder = tiktoken.get_encoding("cl100k_base");
+
 require("dotenv").config();
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const {
+  saveJsonToFile,
+  extract_generated_code,
+} = require("../../../../library/utils/file.js");
 
 function _titleCase(str) {
   return str.replace(/\w\S*/g, function (txt) {
@@ -43,7 +56,7 @@ function error_badSyntax(query) {
       .split(`\n`)
       .slice(
         Math.max(0, query.error_data.error.loc.line - 3),
-        query.error_data.error.loc.line + 3,
+        query.error_data.error.loc.line + 3
       )
       .join(`\n`)
   );
@@ -63,7 +76,7 @@ function error_missingImports(query) {
           !query.error_data.component_imports
             .map((e) => e.imported)
             .flat()
-            .includes(_used_node),
+            .includes(_used_node)
       )
       .map((e) => `* ${e}`)
       .join(`\n`) +
@@ -80,7 +93,7 @@ function error_illegalImports(query) {
   const illegal_imports = query.error_data.component_imports.filter((c) =>
     Object.keys(query.error_data.component_imports_checks)
       .filter((k) => !query.error_data.component_imports_checks[k])
-      .includes(c.from),
+      .includes(c.from)
   );
 
   return (
@@ -162,28 +175,28 @@ async function run(req) {
     },{depth:null})
     */
 
-    const context = [
+    let context = [
       {
         role: `system`,
         content:
           `You are an expert at writing ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} components and fixing ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} code with errors.\n` +
           `Your task is to fix the code of a ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component for a web app, according to the provided detected component errors.\n` +
           `Also, the ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component you write can make use of Tailwind classes for styling.\n` +
           `You will write the full ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component code, which should include all imports.` +
           `The fixed code you generate will be directly written to a .${
             FRAMEWORKS_EXTENSION_MAP[req.query.framework]
           } ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component file and used directly in production.`,
       },
       ...errors_context_entries,
@@ -191,7 +204,7 @@ async function run(req) {
         role: `user`,
         content:
           `- Current ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component code which has errors :\n\n` +
           "```" +
           FRAMEWORKS_EXTENSION_MAP[req.query.framework] +
@@ -199,7 +212,7 @@ async function run(req) {
           req.pipeline.stages[`component-validation-check`].data.code +
           "\n```\n\n" +
           `Rewrite the full code to fix and update the provided ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} web component\n` +
           "The full code of the new " +
           _titleCase(req.query.framework) +
@@ -219,7 +232,7 @@ async function run(req) {
           `- Fix all errors according to the provided errors data\n` +
           `- You are allowed to remove any problematic part of the code and replace it\n` +
           `- Only write the code for the component; Do not write extra code to import it! The code will directly be stored in an individual ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} .${FRAMEWORKS_EXTENSION_MAP[req.query.framework]} file !\n\n` +
           `${
             req.query.framework != "svelte"
@@ -227,17 +240,12 @@ async function run(req) {
               : ""
           }` +
           `Fix and write the updated version of the ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component code as the creative genius and ${_titleCase(
-            req.query.framework,
+            req.query.framework
           )} component genius you are.\n`,
       },
     ];
-
-    const gptPrompt = {
-      model: process.env.OPENAI_MODEL,
-      messages: context,
-    };
 
     console.dir({
       context: context.map((e) => {
@@ -245,47 +253,37 @@ async function run(req) {
       }),
     });
 
+    // Save the context object as a JSON file for debugging purposes
+    DEBUG && saveJsonToFile(context, __dirname + "/" + "gptPrompt.json");
+
     const context_prompt_tokens = tiktokenEncoder.encode(
-      context.map((e) => e.content).join(""),
+      context.map((e) => e.content).join("")
     ).length;
     console.log(
-      `> total context prompt tokens (estimate) : ${context_prompt_tokens}`,
+      `> total context prompt tokens (estimate) : ${context_prompt_tokens}`
     );
 
     let completion = "";
-    const stream = await openai.chat.completions.create({
-      ...gptPrompt,
-      stream: true,
-    });
-    for await (const part of stream) {
-      process.stdout.write(part.choices[0]?.delta?.content || "");
-      try {
-        const chunk = part.choices[0]?.delta?.content || "";
-        completion += chunk;
-        req.stream.write(chunk);
-      } catch (e) {
-        false;
-      }
+    if (!SKIP) {
+      completion = await backendContext.generateChat({ ...req, context });
+
+      // Save the completion string as a JSON file for debugging purposes
+      DEBUG &&
+        saveJsonToFile(completion, path.join(__dirname, "gptReply.json"));
+    } else {
+      completion = fs
+        .readFileSync(path.join(__dirname, "gptReply.json"))
+        .toString();
     }
 
     req.stream.write(`\n`);
 
-    let generated_code = ``;
-    let start = false;
-    for (let l of completion.split("\n")) {
-      let skip = false;
-      if (
-        [
-          "```",
-          ...Object.values(FRAMEWORKS_EXTENSION_MAP).map((e) => "```" + e),
-        ].includes(l.toLowerCase().trim())
-      ) {
-        start = !start;
-        skip = true;
-      }
-      if (start && !skip) generated_code += `${l}\n`;
-    }
-    generated_code = generated_code.trim();
+    let generated_code = extract_generated_code(
+      completion,
+      Object.values(FRAMEWORKS_EXTENSION_MAP)
+    );
+
+    console.log(generated_code);
 
     const validate_new_code_response = await validate_check({
       framework: req.query.framework,
@@ -302,7 +300,10 @@ async function run(req) {
           data: validate_new_code_response.data,
         },
       },
-      { depth: null },
+      { depth: null }
+    );
+    console.log(
+      JSON.stringify(validate_new_code_response.data.validation_errors)
     );
 
     return {
